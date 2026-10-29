@@ -7,7 +7,7 @@ mod download;
 use reqwest::Client as httpclient;
 
 const HELP: &str = "\
-downflac - search and download music
+downflac - search and download music written purely in rust
 
 USAGE:
     downflac [OPTIONS] [SONG NAME...]

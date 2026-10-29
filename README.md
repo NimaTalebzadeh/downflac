@@ -1,6 +1,7 @@
 # downflac
 
-CLI music downloader. Search Deezer for a song, resolve a matching Kuwo stream via `flac.music.hi.cn`, download to disk with a progress bar.
+CLI music downloader. Search Deezer for a song, resolve a matching Kuwo stream via `flac.music.hi.cn`, download to disk with a progress bar
+written in pure rust.
 
 ## Install
 
