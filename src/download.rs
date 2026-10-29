@@ -1,5 +1,13 @@
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use lofty::{
+    config::WriteOptions,
+    file::TaggedFileExt,
+    picture::{Picture, PictureType},
+    prelude::*,
+    tag::Tag,
+};
 use std::fmt::Write;
+use std::io::Cursor;
 use std::{fs::File, io};
 pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut downer = ureq::get(link)
@@ -17,5 +25,21 @@ pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Err
         &mut File::create(pth).expect("there was an error creating the file"),
     )
     .expect("There was an error");
+    Ok(())
+}
+
+pub fn embed_cover(path: String, cover_url: String) -> Result<(), Box<dyn std::error::Error>> {
+    let data = ureq::get(cover_url).call()?.body_mut().read_to_vec()?;
+    let mut pic = Picture::from_reader(&mut Cursor::new(data))?;
+    pic.set_pic_type(PictureType::CoverFront);
+
+    let mut file = lofty::read_from_path(path.clone())?;
+    if file.primary_tag().is_none() {
+        let ty = file.primary_tag_type();
+        file.insert_tag(Tag::new(ty));
+    }
+    let tag = file.primary_tag_mut().unwrap();
+    tag.push_picture(pic);
+    tag.save_to_path(path, WriteOptions::default())?;
     Ok(())
 }

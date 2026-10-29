@@ -40,6 +40,7 @@ pub struct Mdata {
     pub time: String,
     pub sign: String,
     pub minfo: Minfobj,
+    pub pic: String,
 }
 
 fn strfield(v: &serde_json::Value, key: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -86,6 +87,7 @@ pub async fn getmdata(
                     time: nm["time"].to_string().trim_matches('"').to_string(),
                     sign: nm["sign"].to_string().trim_matches('"').to_string(),
                     minfo: serde_json::from_value(nm["minfo"][0].clone())?,
+                    pic: nm["pic_url"].to_string().trim_matches('"').to_string(),
                 },
             });
         }

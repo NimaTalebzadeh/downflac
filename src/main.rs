@@ -84,6 +84,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(_) => println!("Download Completed"),
                 Err(e) => println!("Error: {}", e),
             }
+            println!("{}", dt.pic);
+            let embed: Result<(), Box<dyn std::error::Error>> =
+                download::embed_cover(format!("{}.{}", choice, dt.minfo.format), dt.pic);
+            match embed {
+                Ok(_) => println!("Embed Completed"),
+                Err(e) => println!("Error: {}", e),
+            }
         }
         Err(e) => println!("there was an error: {}", e),
     }
