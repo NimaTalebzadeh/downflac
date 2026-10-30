@@ -1,6 +1,8 @@
 mod api;
 mod search {
     pub mod deezer;
+    pub mod itunes;
+    pub mod music;
 }
 use std::{collections::HashMap, env};
 mod download;
@@ -241,9 +243,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nusics: Vec<api::Nusic> = api::getmdata(htc.clone(), name)
         .await
         .expect("there was an error searching for your music");
-    // let nusics: Vec<deezer::Music> = deezer::dsearch(htc.clone(), name)
-    //     .await
-    //     .expect("there was an error searching for your music");
     for nsc in nusics {
         let nm: String = format!("{} by {} ({})", nsc.title, nsc.artist, nsc.album);
         mhash.insert(nm.clone(), nsc.data);

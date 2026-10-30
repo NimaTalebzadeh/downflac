@@ -1,7 +1,7 @@
-use crate::search::deezer::dsearch;
+use crate::search::itunes::isearch;
 use reqwest::Client as httpclient;
 use serde::Serialize;
-use serde_json::{Value, de};
+use serde_json::Value;
 #[derive(Serialize)]
 struct Search {
     platform: String,
@@ -43,20 +43,12 @@ pub struct Mdata {
     pub pic: String,
 }
 
-fn strfield(v: &serde_json::Value, key: &str) -> Result<String, Box<dyn std::error::Error>> {
-    match &v[key] {
-        serde_json::Value::String(s) => Ok(s.clone()),
-        serde_json::Value::Number(n) => Ok(n.to_string()),
-        other => Err(format!("field `{key}` not a string/number: {other}").into()),
-    }
-}
-
 pub async fn getmdata(
     clnt: httpclient,
-    Name: String,
+    name: String,
 ) -> Result<Vec<Nusic>, Box<dyn std::error::Error>> {
     let mut nams: Vec<Nusic> = Vec::new();
-    let dsrches: Vec<crate::search::deezer::Music> = dsearch(clnt.clone(), Name.clone()).await?;
+    let dsrches: Vec<crate::search::music::Music> = isearch(clnt.clone(), name.clone()).await?;
     for dsrch in dsrches {
         let srch: Search = Search {
             platform: "kuwo".to_string(),
