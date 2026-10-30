@@ -35,7 +35,11 @@ Requires network access to api.deezer.com and flac.music.hi.cn.
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mayhtc: Result<httpclient, reqwest::Error> = httpclient::builder().build();
+    let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .filter_map(|c| reqwest::Certificate::from_der(c).ok());
+    let mayhtc: Result<httpclient, reqwest::Error> =
+        httpclient::builder().tls_certs_only(roots).build();
     let htc = match mayhtc {
         Ok(clnt) => clnt,
         Err(e) => {
