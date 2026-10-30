@@ -6,6 +6,10 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create (e.g. v0.1.0). Leave empty to only build."
+        required: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,7 +29,9 @@ jobs:
           - i686-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
           - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
           - armv7-unknown-linux-gnueabihf
+          - aarch64-linux-android # Termux
     steps:
       - uses: actions/checkout@v4
 
@@ -37,16 +43,22 @@ jobs:
         run: |
           sudo apt-get update
           case "${{ matrix.target }}" in
-            x86_64-unknown-linux-gnu) ;;
-            i686-unknown-linux-gnu)   sudo apt-get install -y gcc-multilib ;;
-            aarch64-unknown-linux-gnu) sudo apt-get install -y gcc-aarch64-linux-gnu ;;
+            i686-unknown-linux-gnu)        sudo apt-get install -y gcc-multilib ;;
+            aarch64-unknown-linux-gnu)     sudo apt-get install -y gcc-aarch64-linux-gnu ;;
             armv7-unknown-linux-gnueabihf) sudo apt-get install -y gcc-arm-linux-gnueabihf ;;
-            x86_64-unknown-linux-musl) sudo apt-get install -y musl-tools ;;
-            aarch64-unknown-linux-musl)
-              curl -sSL https://musl.cc/aarch64-linux-musl-cross.tgz | sudo tar -xz -C /opt
-              echo "/opt/aarch64-linux-musl-cross/bin" >> "$GITHUB_PATH"
-              ;;
+            x86_64-unknown-linux-musl)     sudo apt-get install -y musl-tools ;;
           esac
+
+      # aarch64-musl: zig ships its own musl + cross linker, nothing to download from musl.cc
+      - if: matrix.target == 'aarch64-unknown-linux-musl'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - if: matrix.target == 'aarch64-unknown-linux-musl'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
 
       - name: Configure target
         run: |
@@ -55,11 +67,6 @@ jobs:
               echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
               echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
               echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> "$GITHUB_ENV"
-              ;;
-            aarch64-unknown-linux-musl)
-              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
-              echo "CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc" >> "$GITHUB_ENV"
-              echo "AR_aarch64_unknown_linux_musl=aarch64-linux-musl-ar" >> "$GITHUB_ENV"
               ;;
             armv7-unknown-linux-gnueabihf)
               echo "CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc" >> "$GITHUB_ENV"
@@ -70,14 +77,27 @@ jobs:
               echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
               echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
               ;;
+            aarch64-linux-android)
+              # NDK is preinstalled on ubuntu runners; API 24 = Android 7, below anything Termux supports
+              bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+              echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+              echo "CC_aarch64_linux_android=$bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+              echo "AR_aarch64_linux_android=$bin/llvm-ar" >> "$GITHUB_ENV"
+              ;;
           esac
 
-      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Build
+        run: |
+          if [ "${{ matrix.target }}" = aarch64-unknown-linux-musl ]; then sub=zigbuild; else sub=build; fi
+          cargo $sub --release --locked --target ${{ matrix.target }}
+
+      # tar keeps the exec bit; unique archive names stop artifacts overwriting each other on merge
+      - run: tar -czf downflac-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release downflac
 
       - uses: actions/upload-artifact@v4
         with:
           name: downflac-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/downflac*
+          path: downflac-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   macos:
@@ -97,10 +117,12 @@ jobs:
 
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - run: tar -czf downflac-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release downflac
+
       - uses: actions/upload-artifact@v4
         with:
           name: downflac-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/downflac
+          path: downflac-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   windows:
@@ -125,14 +147,16 @@ jobs:
 
       - run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - run: Compress-Archive target/${{ matrix.target }}/release/downflac.exe downflac-${{ matrix.target }}.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: downflac-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/downflac.exe
+          path: downflac-${{ matrix.target }}.zip
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -145,4 +169,6 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: dist/**
