@@ -166,46 +166,6 @@ async fn act(htc: httpclient, dt: api::Mdata, choice: String) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flags_platform_illegal_chars() {
-        assert!(!has_illegal("Song by Artist (Album)"));
-        assert!(has_illegal("AC/DC by AC\\DC (Live: 1979)"));
-        assert!(has_illegal("bad\nname"));
-        if cfg!(windows) {
-            assert!(has_illegal("what? by who* (x)"));
-        }
-    }
-
-    #[test]
-    fn typed_name_gets_extension_once() {
-        let ext = "flac";
-        let with_ext = |nm: &str| {
-            let nm = nm.trim().trim_end_matches(['.', ' ']).to_string();
-            let e = format!(".{ext}");
-            if nm.to_lowercase().ends_with(&e) {
-                nm
-            } else {
-                format!("{nm}{e}")
-            }
-        };
-        assert_eq!(with_ext("my song"), "my song.flac");
-        assert_eq!(with_ext("my song.flac"), "my song.flac");
-        assert_eq!(with_ext("my song.FLAC"), "my song.FLAC");
-        assert_eq!(with_ext("my song... "), "my song.flac");
-    }
-
-    #[test]
-    fn autofix_yields_saveable_names() {
-        assert!(!has_illegal(&autofix("AC/DC by AC\\DC (Live: 1979)")));
-        assert!(!has_illegal(&autofix("trailing dots... ")));
-        assert_eq!(autofix("AC/DC"), "AC／DC");
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS

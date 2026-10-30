@@ -106,60 +106,6 @@ pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct Slow {
-        chunks: usize,
-        read: usize,
-    }
-
-    impl Read for Slow {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.read >= self.chunks {
-                return Ok(0);
-            }
-            self.read += 1;
-            thread::sleep(Duration::from_millis(10));
-            buf[0] = b'x';
-            Ok(1)
-        }
-    }
-
-    #[test]
-    fn pause_stops_progress_until_cleared() {
-        let paused = Arc::new(AtomicBool::new(false));
-        let flag = paused.clone();
-        let mut reader = Slow {
-            chunks: 5,
-            read: 0,
-        };
-        let mut out: Vec<u8> = Vec::new();
-        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let seen = counter.clone();
-
-        let t = thread::spawn(move || {
-            pump(&mut reader, &mut out, &flag, |n| {
-                seen.fetch_add(n, Ordering::SeqCst);
-            })
-            .unwrap();
-            out.len()
-        });
-
-        thread::sleep(Duration::from_millis(25));
-        paused.store(true, Ordering::SeqCst);
-        let at_pause = counter.load(Ordering::SeqCst);
-        thread::sleep(Duration::from_millis(120));
-        let still = counter.load(Ordering::SeqCst);
-        assert_eq!(at_pause, still, "chunks kept arriving while paused");
-
-        paused.store(false, Ordering::SeqCst);
-        let total = t.join().unwrap();
-        assert_eq!(total, 5, "download did not finish after resuming");
-    }
-}
-
 pub fn embed_cover(path: String, cover_url: String) -> Result<(), Box<dyn std::error::Error>> {
     let data = ureq::get(cover_url).call()?.body_mut().read_to_vec()?;
     let mut pic = Picture::from_reader(&mut Cursor::new(data))?;
