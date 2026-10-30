@@ -26,12 +26,24 @@ EXAMPLES:
 
 PIPELINE:
     1. Matches up to 5 songs on Deezer for your query.
-    2. Searches Kuwo (flac.music.hi.cn) for each match.
+    2. Searches Kuwo for each match.
     3. Prompts you to select a result.
     4. Downloads it to '<title> by <artist> (<album>).<format>'.
-
-Requires network access to api.deezer.com and flac.music.hi.cn.
 ";
+
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if "<>:\"/\\|?*".contains(c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim_end_matches(['.', ' '])
+        .to_string()
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -83,14 +95,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dt: api::Mdata = mhash[&choice].clone();
             let link: String = api::getmusic(htc.clone(), dt.clone()).await?;
             let down: Result<(), Box<dyn std::error::Error>> =
-                download::download(link, format!("{}.{}", choice, dt.minfo.format));
+                download::download(link, format!("{}.{}", sanitize(&choice), dt.minfo.format));
             match down {
                 Ok(_) => println!("Download Completed"),
                 Err(e) => println!("Error: {}", e),
             }
             println!("{}", dt.pic);
             let embed: Result<(), Box<dyn std::error::Error>> =
-                download::embed_cover(format!("{}.{}", choice, dt.minfo.format), dt.pic);
+                download::embed_cover(format!("{}.{}", sanitize(&choice), dt.minfo.format), dt.pic);
             match embed {
                 Ok(_) => println!("Embed Completed"),
                 Err(e) => println!("Error: {}", e),

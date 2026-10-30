@@ -9,6 +9,7 @@ use lofty::{
 use std::fmt::Write;
 use std::io::Cursor;
 use std::{fs::File, io};
+
 pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Error>> {
     let mut downer = ureq::get(link)
         .call()
