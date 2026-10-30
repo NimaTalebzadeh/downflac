@@ -1,4 +1,4 @@
 /target
 *.flac
 .DS_Store
-worker/.wrangler/
+/worker
