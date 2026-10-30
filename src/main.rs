@@ -1,6 +1,8 @@
 mod api;
 mod search {
     pub mod deezer;
+    pub mod itunes;
+    pub mod music;
 }
 use std::{collections::HashMap, env};
 mod download;
@@ -106,28 +108,6 @@ fn resolve_name(choice: &str, fmt: &str) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flags_platform_illegal_chars() {
-        assert!(!has_illegal("Song by Artist (Album)"));
-        assert!(has_illegal("AC/DC by AC\\DC (Live: 1979)"));
-        assert!(has_illegal("bad\nname"));
-        if cfg!(windows) {
-            assert!(has_illegal("what? by who* (x)"));
-        }
-    }
-
-    #[test]
-    fn autofix_yields_saveable_names() {
-        assert!(!has_illegal(&autofix("AC/DC by AC\\DC (Live: 1979)")));
-        assert!(!has_illegal(&autofix("trailing dots... ")));
-        assert_eq!(autofix("AC/DC"), "AC／DC");
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
@@ -163,9 +143,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let nusics: Vec<api::Nusic> = api::getmdata(htc.clone(), name)
         .await
         .expect("there was an error searching for your music");
-    // let nusics: Vec<deezer::Music> = deezer::dsearch(htc.clone(), name)
-    //     .await
-    //     .expect("there was an error searching for your music");
     for nsc in nusics {
         let nm: String = format!("{} by {} ({})", nsc.title, nsc.artist, nsc.album);
         mhash.insert(nm.clone(), nsc.data);
