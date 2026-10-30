@@ -34,9 +34,13 @@ PIPELINE:
     4. Downloads it to '<title> by <artist> (<album>).<format>'.
 
 SHARING:
-    After selecting a song you can create a share link instead of
-    downloading. Paste that link (or just its id) as the search query
-    to download the exact same file.
+    After selecting a song you can create a share code instead of
+    downloading. Paste that code as the search query to download the
+    exact same file. Nothing leaves your machine.
+
+PAUSING:
+    While a download runs, press Enter to pause it and Enter again
+    to resume.
 ";
 
 const ILLEGAL: &str = if cfg!(windows) {
@@ -150,9 +154,9 @@ async fn act(htc: httpclient, dt: api::Mdata, choice: String) {
     let opts: Vec<String> = vec!["download".to_string(), "get a share link".to_string()];
     match inquire::Select::new("what do you want to do?", opts).prompt() {
         Ok(o) if o == "download" => save(htc, dt, choice).await,
-        Ok(_) => match share::create(htc, &choice, &dt).await {
-            Ok(url) => println!("Share link:\n{url}"),
-            Err(e) => println!("Error: {}", e),
+        Ok(_) => match share::create(&choice, &dt) {
+            Some(code) => println!("Share code:\n{code}"),
+            None => println!("Error: could not build a share code"),
         },
         Err(e) => println!("there was an error: {}", e),
     }
@@ -228,12 +232,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if let Some(sid) = share::parse(&name) {
-        match share::resolve(htc.clone(), &sid).await {
-            Ok(shared) => {
+        match share::resolve(&sid) {
+            Some(shared) => {
                 let choice = format!("{} by {} ({})", shared.title, shared.artist, shared.album);
                 save(htc.clone(), shared.data, choice).await;
             }
-            Err(e) => println!("Error: {}", e),
+            None => println!("Error: that is not a valid share code"),
         }
         return Ok(());
     }

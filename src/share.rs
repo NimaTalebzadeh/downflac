@@ -1,90 +1,124 @@
 use crate::api;
-use reqwest::Client as httpclient;
-use serde_json::json;
 
-pub const BASE: &str = "https://downflac.nimadev.online";
+const MAGIC: &str = "D1";
 
-fn share_id(s: &str) -> Option<&str> {
-    let t = s.trim();
-    let t = t.rsplit_once("#s/").map(|(_, id)| id).unwrap_or(t);
-    let t = t.split(['?', '/']).next().unwrap_or(t);
-    let t = t.trim();
-    if t.len() == 16 && t.bytes().all(|b| b.is_ascii_hexdigit()) {
-        Some(t)
-    } else {
-        None
+fn enc(b: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut o = String::new();
+    for c in b.chunks(3) {
+        let n = c.len();
+        let b0 = c[0] as u32;
+        let b1 = if n > 1 { c[1] as u32 } else { 0 };
+        let b2 = if n > 2 { c[2] as u32 } else { 0 };
+        let v = (b0 << 16) | (b1 << 8) | b2;
+        o.push(T[(v >> 18) as usize & 63] as char);
+        o.push(T[(v >> 12) as usize & 63] as char);
+        if n > 1 {
+            o.push(T[(v >> 6) as usize & 63] as char);
+        }
+        if n > 2 {
+            o.push(T[v as usize & 63] as char);
+        }
     }
+    o
+}
+
+fn dec(s: &str) -> Option<Vec<u8>> {
+    let mut acc: u32 = 0;
+    let mut bits = 0;
+    let mut out = Vec::new();
+    for ch in s.bytes() {
+        let v = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            _ => return None,
+        } as u32;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+fn put(o: &mut Vec<u8>, s: &str) -> Option<()> {
+    let b = s.as_bytes();
+    if b.len() > u16::MAX as usize {
+        return None;
+    }
+    o.extend_from_slice(&(b.len() as u16).to_le_bytes());
+    o.extend_from_slice(b);
+    Some(())
+}
+
+fn take<'a>(b: &'a [u8], i: &mut usize) -> Option<&'a str> {
+    if *i + 2 > b.len() {
+        return None;
+    }
+    let n = u16::from_le_bytes([b[*i], b[*i + 1]]) as usize;
+    *i += 2;
+    let s = b.get(*i..*i + n)?;
+    *i += n;
+    std::str::from_utf8(s).ok()
+}
+
+pub fn create(label: &str, dt: &api::Mdata) -> Option<String> {
+    let mut raw = Vec::new();
+    for f in [
+        dt.id.as_str(),
+        dt.time.as_str(),
+        dt.sign.as_str(),
+        dt.minfo.format.as_str(),
+        dt.minfo.bitrate.as_str(),
+        dt.pic.as_str(),
+        label,
+    ] {
+        put(&mut raw, f)?;
+    }
+    Some(format!("{MAGIC}{}", enc(&raw)))
 }
 
 pub fn parse(s: &str) -> Option<String> {
-    share_id(s).map(str::to_string)
+    let t = s.trim();
+    let t = t.rsplit_once("#s/").map(|(_, id)| id).unwrap_or(t);
+    let t = t.trim_start_matches(MAGIC);
+    let raw = dec(t)?;
+    let mut i = 0;
+    let id = take(&raw, &mut i)?;
+    if id.is_empty() {
+        return None;
+    }
+    take(&raw, &mut i)?;
+    take(&raw, &mut i)?;
+    take(&raw, &mut i)?;
+    take(&raw, &mut i)?;
+    take(&raw, &mut i)?;
+    take(&raw, &mut i)?;
+    if i != raw.len() {
+        return None;
+    }
+    Some(format!("{MAGIC}{t}"))
 }
 
-fn hours() -> Result<u32, Box<dyn std::error::Error>> {
-    let opts: Vec<String> = vec![
-        "1 hour".to_string(),
-        "6 hours".to_string(),
-        "24 hours".to_string(),
-        "72 hours".to_string(),
-        "7 days".to_string(),
-    ];
-    let hours: Vec<u32> = vec![1, 6, 24, 72, 168];
-    let pick = inquire::Select::new("how long should the link work?", opts.clone()).prompt()?;
-    let idx = opts.iter().position(|o| *o == pick).unwrap_or(2);
-    Ok(hours[idx])
-}
-
-pub async fn create(
-    clnt: httpclient,
-    label: &str,
-    dt: &api::Mdata,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let exp = hours()?;
-    let body = json!({
-        "id": dt.id,
-        "time": dt.time,
-        "sign": dt.sign,
-        "format": dt.minfo.format,
-        "bitrate": dt.minfo.bitrate,
-        "label": label,
-        "pic": dt.pic,
-        "expiry_hours": exp,
-    });
-    let resp: serde_json::Value = clnt
-        .post(format!("{BASE}/api/share"))
-        .json(&body)
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(resp["url"]
-        .as_str()
-        .ok_or("share server returned no url")?
-        .to_string())
-}
-
-pub async fn resolve(
-    clnt: httpclient,
-    id: &str,
-) -> Result<api::Nusic, Box<dyn std::error::Error>> {
-    let resp: serde_json::Value = clnt
-        .post(format!("{BASE}/api/resolve"))
-        .json(&json!({ "share": id }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let s = |k: &str| resp[k].as_str().unwrap_or("").to_string();
-    let minfo = api::Minfobj {
-        format: s("format"),
-        bitrate: s("bitrate"),
-        level: String::new(),
-        size: String::new(),
-    };
-    let title = s("label");
-    let (title, artist, album) = match title
+pub fn resolve(token: &str) -> Option<api::Nusic> {
+    let raw = dec(token.trim_start_matches(MAGIC))?;
+    let mut i = 0;
+    let id = take(&raw, &mut i)?.to_string();
+    let time = take(&raw, &mut i)?.to_string();
+    let sign = take(&raw, &mut i)?.to_string();
+    let format = take(&raw, &mut i)?.to_string();
+    let bitrate = take(&raw, &mut i)?.to_string();
+    let pic = take(&raw, &mut i)?.to_string();
+    let label = take(&raw, &mut i)?.to_string();
+    if i != raw.len() {
+        return None;
+    }
+    let (title, artist, album) = match label
         .split_once(" by ")
         .and_then(|(t, rest)| rest.rsplit_once(" (").map(|(a, al)| (t, a, al)))
     {
@@ -93,18 +127,23 @@ pub async fn resolve(
             a.to_string(),
             al.trim_end_matches(')').to_string(),
         ),
-        None => (title.clone(), String::new(), String::new()),
+        None => (label.clone(), String::new(), String::new()),
     };
-    Ok(api::Nusic {
+    Some(api::Nusic {
         title,
         artist,
         album,
         data: api::Mdata {
-            id: s("id"),
-            time: s("time"),
-            sign: s("sign"),
-            minfo,
-            pic: s("pic"),
+            id,
+            time,
+            sign,
+            minfo: api::Minfobj {
+                format,
+                bitrate,
+                level: String::new(),
+                size: String::new(),
+            },
+            pic,
         },
     })
 }
@@ -113,22 +152,58 @@ pub async fn resolve(
 mod tests {
     use super::*;
 
-    #[test]
-    fn accepts_full_link_or_bare_id() {
-        let id = "0123456789abcdef";
-        assert_eq!(
-            parse(&format!("{BASE}/#s/{id}")).as_deref(),
-            Some(id),
-            "full link"
-        );
-        assert_eq!(parse(id).as_deref(), Some(id), "bare id");
-        assert_eq!(parse(&format!(" {id} ")).as_deref(), Some(id), "padded");
+    fn sample() -> api::Mdata {
+        api::Mdata {
+            id: "72345678".to_string(),
+            time: "245".to_string(),
+            sign: "a+b/c=".to_string(),
+            minfo: api::Minfobj {
+                format: "flac".to_string(),
+                bitrate: "1000".to_string(),
+                level: "lossless".to_string(),
+                size: "34M".to_string(),
+            },
+            pic: "https://img.example/cover.jpg".to_string(),
+        }
     }
 
     #[test]
-    fn rejects_non_share_search_text() {
+    fn round_trips_every_field() {
+        let dt = sample();
+        let tok = create("Song by Artist (Album)", &dt).unwrap();
+        let back = resolve(&tok).unwrap();
+        assert_eq!(back.data.id, dt.id);
+        assert_eq!(back.data.time, dt.time);
+        assert_eq!(back.data.sign, dt.sign);
+        assert_eq!(back.data.minfo.format, dt.minfo.format);
+        assert_eq!(back.data.minfo.bitrate, dt.minfo.bitrate);
+        assert_eq!(back.data.pic, dt.pic);
+        assert_eq!(back.title, "Song");
+        assert_eq!(back.artist, "Artist");
+        assert_eq!(back.album, "Album");
+    }
+
+    #[test]
+    fn token_is_url_safe() {
+        let tok = create("Song by Artist (Album)", &sample()).unwrap();
+        assert!(tok.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+
+    #[test]
+    fn parse_accepts_token_and_rejects_junk() {
+        let tok = create("Song by Artist (Album)", &sample()).unwrap();
+        assert_eq!(parse(&tok).as_deref(), Some(tok.as_str()));
+        assert_eq!(parse(&format!("  {tok}  ")).as_deref(), Some(tok.as_str()));
+        assert_eq!(parse(&format!("https://x/#s/{tok}")).as_deref(), Some(tok.as_str()));
         assert_eq!(parse("never gonna give you up"), None);
-        assert_eq!(parse("0123456789abcde"), None, "too short");
-        assert_eq!(parse("0123456789abcdeZ"), None, "non hex");
+        assert_eq!(parse("D1"), None);
+        assert_eq!(parse("D1!!!!"), None);
+    }
+
+    #[test]
+    fn truncated_token_is_rejected() {
+        let tok = create("Song by Artist (Album)", &sample()).unwrap();
+        let cut = &tok[..tok.len() - 4];
+        assert_eq!(parse(cut), None);
     }
 }
