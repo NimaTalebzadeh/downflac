@@ -1,9 +1,8 @@
 # downflac
 
-CLI music downloader. Search Deezer for a song, resolve a matching Kuwo stream via `flac.music.hi.cn`, download to disk with a progress bar
-written in pure rust.
+a small music downloader written in rust that allows you to get almost any music in full FLAC quality for free.
 
-## Install
+## Build
 
 ```sh
 cargo build --release
@@ -17,6 +16,11 @@ Binary at `target/release/downflac`.
 downflac [song name...]
 ```
 
+or just 
+```sh
+downflac
+```
+
 - `-h`, `--help`: print help and exit.
 
 - No args: prompts `Enter the name of your intended song:`.
@@ -25,12 +29,12 @@ downflac [song name...]
 Then:
 
 1. Picks up to 5 Deezer matches.
-2. Searches Kuwo on `flac.music.hi.cn` for each.
+2. Searches Kuwo for each.
 3. Interactive select: `select a song` — list items `"<title> by <artist> (<album>)"`.
 4. Downloads the chosen result to `"<title> by <artist> (<album>).<format>"` in the current dir.
+5. embeds the song's cover art into the file
 
 ## Notes
 
-- Requires network access to `api.deezer.com` and `flac.music.hi.cn`.
-- Output filename is the raw selection label plus format, e.g. `Song by Artist (Album).mp3`. Not sanitized — titles containing `/` or similar can fail.
+- Output filename is the raw selection label plus format, e.g. `Song by Artist (Album).mp3`.
 - On success prints `Download Completed`; errors are printed but the process still exits 0.
