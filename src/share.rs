@@ -56,6 +56,17 @@ fn put(o: &mut Vec<u8>, s: &str) -> Option<()> {
     Some(())
 }
 
+fn take_raw<'a>(b: &'a [u8], i: &mut usize) -> Option<&'a [u8]> {
+    if *i + 2 > b.len() {
+        return None;
+    }
+    let n = u16::from_le_bytes([b[*i], b[*i + 1]]) as usize;
+    *i += 2;
+    let s = b.get(*i..*i + n)?;
+    *i += n;
+    Some(s)
+}
+
 fn take<'a>(b: &'a [u8], i: &mut usize) -> Option<&'a str> {
     if *i + 2 > b.len() {
         return None;
@@ -67,19 +78,33 @@ fn take<'a>(b: &'a [u8], i: &mut usize) -> Option<&'a str> {
     std::str::from_utf8(s).ok()
 }
 
+fn hexpack(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
+fn hexunpack(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
 pub fn create(label: &str, dt: &api::Mdata) -> Option<String> {
     let mut raw = Vec::new();
-    for f in [
-        dt.id.as_str(),
-        dt.time.as_str(),
-        dt.sign.as_str(),
-        dt.minfo.format.as_str(),
-        dt.minfo.bitrate.as_str(),
-        dt.pic.as_str(),
-        label,
-    ] {
-        put(&mut raw, f)?;
-    }
+    put(&mut raw, dt.id.as_str())?;
+    put(&mut raw, dt.time.as_str())?;
+    let packed = hexpack(&dt.sign);
+    let flag: u8 = if packed.is_some() { 1 } else { 0 };
+    let sign = packed.unwrap_or_else(|| dt.sign.as_bytes().to_vec());
+    raw.push(flag);
+    raw.extend_from_slice(&(sign.len() as u16).to_le_bytes());
+    raw.extend_from_slice(&sign);
+    put(&mut raw, dt.minfo.format.as_str())?;
+    put(&mut raw, dt.minfo.bitrate.as_str())?;
+    put(&mut raw, label)?;
     Some(format!("{MAGIC}{}", enc(&raw)))
 }
 
@@ -94,8 +119,14 @@ pub fn parse(s: &str) -> Option<String> {
         return None;
     }
     take(&raw, &mut i)?;
-    take(&raw, &mut i)?;
-    take(&raw, &mut i)?;
+    if *raw.get(i)? != 0 && *raw.get(i)? != 1 {
+        return None;
+    }
+    i += 1;
+    let sign = take_raw(&raw, &mut i)?;
+    if sign.is_empty() {
+        return None;
+    }
     take(&raw, &mut i)?;
     take(&raw, &mut i)?;
     take(&raw, &mut i)?;
@@ -110,10 +141,16 @@ pub fn resolve(token: &str) -> Option<api::Nusic> {
     let mut i = 0;
     let id = take(&raw, &mut i)?.to_string();
     let time = take(&raw, &mut i)?.to_string();
-    let sign = take(&raw, &mut i)?.to_string();
+    let flag = *raw.get(i)?;
+    i += 1;
+    let sign_bytes = take_raw(&raw, &mut i)?;
+    let sign = if flag == 1 {
+        hexunpack(sign_bytes)
+    } else {
+        std::str::from_utf8(sign_bytes).ok()?.to_string()
+    };
     let format = take(&raw, &mut i)?.to_string();
     let bitrate = take(&raw, &mut i)?.to_string();
-    let pic = take(&raw, &mut i)?.to_string();
     let label = take(&raw, &mut i)?.to_string();
     if i != raw.len() {
         return None;
@@ -143,7 +180,7 @@ pub fn resolve(token: &str) -> Option<api::Nusic> {
                 level: String::new(),
                 size: String::new(),
             },
-            pic,
+            pic: String::new(),
         },
     })
 }
@@ -177,7 +214,7 @@ mod tests {
         assert_eq!(back.data.sign, dt.sign);
         assert_eq!(back.data.minfo.format, dt.minfo.format);
         assert_eq!(back.data.minfo.bitrate, dt.minfo.bitrate);
-        assert_eq!(back.data.pic, dt.pic);
+        assert_eq!(back.data.pic, "");
         assert_eq!(back.title, "Song");
         assert_eq!(back.artist, "Artist");
         assert_eq!(back.album, "Album");

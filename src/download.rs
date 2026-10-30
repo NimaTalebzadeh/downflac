@@ -15,19 +15,68 @@ use std::time::Duration;
 use std::io::Cursor;
 use std::{fs::File, io};
 
-fn watch_pause() -> Arc<AtomicBool> {
+fn watch_pause(bar: ProgressBar) -> Option<Arc<AtomicBool>> {
+    use crossterm::event::{poll, read, Event, KeyCode, KeyEventKind};
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use std::time::Duration;
+
+    if enable_raw_mode().is_err() {
+        return None;
+    }
     let paused = Arc::new(AtomicBool::new(false));
     let flag = paused.clone();
     thread::spawn(move || {
-        let mut buf = [0u8; 1];
         loop {
-            match io::stdin().read(&mut buf) {
-                Ok(0) | Err(_) => return,
-                Ok(_) => flag.store(!flag.load(Ordering::SeqCst), Ordering::SeqCst),
+            if !matches!(poll(Duration::from_millis(100)), Ok(true)) {
+                continue;
+            }
+            match read() {
+                Ok(Event::Key(k)) if k.kind == KeyEventKind::Press => match k.code {
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        let now = !flag.load(Ordering::SeqCst);
+                        flag.store(now, Ordering::SeqCst);
+                        let msg = if now {
+                            "-- paused, Enter or space to resume --"
+                        } else {
+                            "-- resuming --"
+                        };
+                        bar.suspend(|| println!("{msg}"));
+                    }
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        let _ = disable_raw_mode();
+                        return;
+                    }
+                    _ => {}
+                },
+                Err(_) => return,
+                _ => {}
             }
         }
     });
-    paused
+    Some(paused)
+}
+
+fn pump(
+    reader: &mut dyn Read,
+    out: &mut dyn IoWrite,
+    paused: &AtomicBool,
+    mut tick: impl FnMut(usize),
+) -> io::Result<()> {
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        while paused.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            return Ok(());
+        }
+        while paused.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        out.write_all(&buf[..n])?;
+        tick(n);
+    }
 }
 
 pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -41,25 +90,74 @@ pub fn download(link: String, pth: String) -> Result<(), Box<dyn std::error::Err
             .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
             .progress_chars("#>-"));
 
-    println!("press Enter to pause or resume this download");
-    let paused = watch_pause();
+    progress.suspend(|| println!("downloading... Enter or space to pause, Esc to hide this hint"));
+    let watched = watch_pause(progress.clone());
+    let idle = Arc::new(AtomicBool::new(false));
+    let paused = watched.clone().unwrap_or_else(|| idle.clone());
     let mut reader = downer.as_reader();
     let mut out = File::create(pth).expect("there was an error creating the file");
-    let mut buf = vec![0u8; 64 * 1024];
-    loop {
-        while paused.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_millis(100));
-        }
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        out.write_all(&buf[..n])?;
-        progress.inc(n as u64);
+    let result = pump(&mut reader, &mut out, &paused, |n| progress.inc(n as u64));
+    if watched.is_some() {
+        let _ = crossterm::terminal::disable_raw_mode();
     }
+    result?;
     out.flush()?;
     progress.finish();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Slow {
+        chunks: usize,
+        read: usize,
+    }
+
+    impl Read for Slow {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.read >= self.chunks {
+                return Ok(0);
+            }
+            self.read += 1;
+            thread::sleep(Duration::from_millis(10));
+            buf[0] = b'x';
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn pause_stops_progress_until_cleared() {
+        let paused = Arc::new(AtomicBool::new(false));
+        let flag = paused.clone();
+        let mut reader = Slow {
+            chunks: 5,
+            read: 0,
+        };
+        let mut out: Vec<u8> = Vec::new();
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = counter.clone();
+
+        let t = thread::spawn(move || {
+            pump(&mut reader, &mut out, &flag, |n| {
+                seen.fetch_add(n, Ordering::SeqCst);
+            })
+            .unwrap();
+            out.len()
+        });
+
+        thread::sleep(Duration::from_millis(25));
+        paused.store(true, Ordering::SeqCst);
+        let at_pause = counter.load(Ordering::SeqCst);
+        thread::sleep(Duration::from_millis(120));
+        let still = counter.load(Ordering::SeqCst);
+        assert_eq!(at_pause, still, "chunks kept arriving while paused");
+
+        paused.store(false, Ordering::SeqCst);
+        let total = t.join().unwrap();
+        assert_eq!(total, 5, "download did not finish after resuming");
+    }
 }
 
 pub fn embed_cover(path: String, cover_url: String) -> Result<(), Box<dyn std::error::Error>> {

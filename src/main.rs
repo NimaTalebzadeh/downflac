@@ -142,6 +142,10 @@ async fn save(htc: httpclient, dt: api::Mdata, choice: String) {
         Ok(_) => println!("Download Completed"),
         Err(e) => println!("Error: {}", e),
     }
+    if dt.pic.is_empty() {
+        println!("No cover to embed");
+        return;
+    }
     println!("{}", dt.pic);
     let embed: Result<(), Box<dyn std::error::Error>> = download::embed_cover(pth, dt.pic);
     match embed {
@@ -151,7 +155,7 @@ async fn save(htc: httpclient, dt: api::Mdata, choice: String) {
 }
 
 async fn act(htc: httpclient, dt: api::Mdata, choice: String) {
-    let opts: Vec<String> = vec!["download".to_string(), "get a share link".to_string()];
+    let opts: Vec<String> = vec!["download".to_string(), "get a share code".to_string()];
     match inquire::Select::new("what do you want to do?", opts).prompt() {
         Ok(o) if o == "download" => save(htc, dt, choice).await,
         Ok(_) => match share::create(&choice, &dt) {
